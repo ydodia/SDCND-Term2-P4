@@ -3,6 +3,10 @@
 #include "json.hpp"
 #include "PID.h"
 #include <math.h>
+#include <algorithm>
+
+#include <chrono>
+#include <thread>
 
 // for convenience
 using json = nlohmann::json;
@@ -28,53 +32,122 @@ std::string hasData(std::string s) {
   return "";
 }
 
+//#define TWIDDLE
+
 int main()
 {
   uWS::Hub h;
 
-  PID pid;
-  // TODO: Initialize the pid variable.
+  PID pid_steering;
+  std::vector<double> p_steering = {0.0876, 1.58e-03, 3.808};
+  pid_steering.Init(p_steering);
+  PID pid_throttle;
+  std::vector<double> p_throttle = {0.05, 2e-3, 3.25};
+  pid_throttle.Init(p_throttle);
+  int counter{0}, count_min{100};
+  double err{0}, avg_speed{0};
+#ifdef TWIDDLE
+  int count_cutoff{2000+count_min};
+  bool twiddle_steer = true;
+  std::vector<double> dp_steering = {0.00048, 1.17e-05, 0.05839};
+  Twiddle tw_steering("steering");
+  std::vector<double> dp_throttle = {0.001, 1e-4, 0.1};
+  Twiddle tw_throttle("throttle");
+#else
+  int count_cutoff{2250+count_min};
+  int run{1};
+#endif
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  h.onMessage([&](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode)
+      {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     if (length && length > 2 && data[0] == '4' && data[1] == '2')
     {
+      ++counter;
       auto s = hasData(std::string(data).substr(0, length));
-      if (s != "") {
+      if (s != "")
+      {
         auto j = json::parse(s);
         std::string event = j[0].get<std::string>();
-        if (event == "telemetry") {
+        if (event == "telemetry")
+        {
           // j[1] is the data JSON object
           double cte = std::stod(j[1]["cte"].get<std::string>());
           double speed = std::stod(j[1]["speed"].get<std::string>());
-          double angle = std::stod(j[1]["steering_angle"].get<std::string>());
-          double steer_value;
-          /*
-          * TODO: Calcuate steering value here, remember the steering value is
-          * [-1, 1].
-          * NOTE: Feel free to play around with the throttle and speed. Maybe use
-          * another PID controller to control the speed!
-          */
-          
+          //double angle = std::stod(j[1]["steering_angle"].get<std::string>());
+          pid_steering.UpdateError(cte);
+          double steer_value = pid_steering.TotalError();
+          pid_throttle.UpdateError(std::abs(cte));
+          double throttle_value = 1.0 - 2*std::abs(pid_throttle.TotalError());
+
           // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+          //std::cout << counter << " | CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+          //std::cout << "CTE: " << cte << " Throttle Value: " << throttle_value << std::endl;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = throttle_value;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+          err += std::abs(cte);
+          avg_speed += speed;
+#ifdef TWIDDLE
+          if(counter == count_cutoff)
+          {
+            err /= static_cast<double>(counter-count_min);
+            avg_speed /= static_cast<double>(counter-count_min);
+            if(twiddle_steer)
+            {
+              tw_steering.printState(p_steering, dp_steering);
+              tw_steering.update(p_steering, dp_steering, err);
+              pid_steering.Init(p_steering);
+
+            }
+            else
+            {
+              tw_throttle.printState(p_throttle, dp_throttle);
+              tw_throttle.update(p_throttle, dp_throttle, err);
+              pid_throttle.Init(p_throttle);
+            }
+            std::string msg = "42[\"reset\",{}]";
+            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+            std::cerr << "\nThrottle base: "  << throttle_base << "\n";
+            std::cerr << "count_cutoff: " << count_cutoff << "\n";
+            if(err > 0.001)
+              printf("mean error: %2.3f\n", err);
+            else
+              printf("mean error: %1.2e\n", err);
+
+            err = 0.0;
+            counter = 0;
+          }
+#else
+          if(counter == count_cutoff)
+          {
+            err /= static_cast<double>(counter-count_min);
+            avg_speed /= static_cast<double>(counter-count_min);
+            printf("--= Run %d \n", run++);
+            printf("mean error: %1.2e\n", err);
+            printf("avg speed: %2.1f \n", avg_speed);
+            err = 0.0;
+            counter = 0;
+            count_min = 0;
+          }
+#endif
+
         }
-      } else {
+      }
+      else
+      {
         // Manual driving
         std::string msg = "42[\"manual\",{}]";
         ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
       }
     }
-  });
+      });
 
   // We don't need this since we're not using HTTP but if it's removed the program
   // doesn't compile :-(
@@ -112,3 +185,6 @@ int main()
   }
   h.run();
 }
+
+
+
