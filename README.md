@@ -30,13 +30,15 @@ The `D` component controls the rate of change of the error. That is, if the erro
 #### Twiddle 
 I set the `dp` values for each of the P-I-D components in relation to the seeded values; i.e., something close to the order of magnitude of the respective component. The Twiddle algorithm took a lot of time to converge to decent values and seeding good starting values greatly made this process efficient.
 
+### Results
+
 My resulting PID values were:
 
 `p_steering = {0.0876, 1.58e-03, 3.808}`
 
 `p_throttle = {0.05, 2e-3, 3.25}`
 
-This setup resulted in several successful roundtrips around the track with a mean error of approximately `0.60` and with mean speed per lap between `60 - 65` mph.
+This setup resulted in several successful roundtrips around the track with a **mean error** of approximately `0.60` and with **mean speed** per lap between `60 - 65` mph.
 
 
 
